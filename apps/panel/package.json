@@ -1,0 +1,28 @@
+{
+  "name": "@cybrix/panel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CYBRIX Panel — Cloudflare Worker (SSOT: REST API + D1 + Web Admin, Prompts 3/4/5)",
+  "type": "module",
+  "main": "src/worker.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply CYBRIX_DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply CYBRIX_DB --remote"
+  },
+  "dependencies": {
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250914.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8",
+    "wrangler": "^4.16.0"
+  }
+}

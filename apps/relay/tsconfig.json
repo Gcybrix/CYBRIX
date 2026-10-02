@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "outDir": "dist",
+    "rootDir": "../..",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": false,
+    "sourceMap": false,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@cybrix/shared-types": ["../../packages/shared-types/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "../../packages/shared-types/src/**/*.ts"],
+  "exclude": ["dist", "test", "scripts"]
+}

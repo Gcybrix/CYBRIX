@@ -1,0 +1,45 @@
+#:schema node_modules/wrangler/config-schema.json
+# CYBRIX Panel — Cloudflare Worker (SSOT). Secrets are NEVER declared here:
+#   ADMIN_PEPPER, DATA_ENCRYPTION_KEY  (set via `wrangler secret put`)
+
+name = "cybrix-panel"
+main = "src/worker.ts"
+compatibility_date = "2025-03-01"
+
+# Custom Domain on YOUR OWN zone — REQUIRED for Bot(Worker) → Panel(Worker) fetch:
+# Cloudflare blocks Worker→Worker requests to *.workers.dev on the same account (error 1042).
+# deploy-cf-panel.sh activates this automatically from PANEL_DOMAIN in .secrets/cybrix.env.
+# Manual alternative: uncomment and set a hostname from your own Cloudflare zone.
+# routes = [
+#   { pattern = "panel.your-domain.example", custom_domain = true }
+# ]
+
+[observability]
+enabled = true
+
+[vars]
+LOG_LEVEL = "info"
+PANEL_VERSION = "panel-0.1.0"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "CYBRIX_DB"
+# deploy-cf-panel.sh creates-or-reuses the database and patches this ID automatically
+database_id = "REPLACE_BY_DEPLOY_SCRIPT"
+migrations_dir = "migrations"
+
+# deploy-cf-panel.sh creates-or-reuses this namespace and patches the ID automatically
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_BY_DEPLOY_SCRIPT"
+
+[triggers]
+crons = ["17 3 * * *"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+# ALL requests go through the worker first: API routes handled by Hono,
+# everything else served via ASSETS with security headers (CSP/nosniff/DENY/no-referrer).
+# run_worker_first=true is REQUIRED so static responses also carry the security headers.
+run_worker_first = true

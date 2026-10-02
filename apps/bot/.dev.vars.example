@@ -1,0 +1,17 @@
+# cybrix-bot local development secrets — COPY to `.dev.vars` (gitignored) and fill in.
+# In production use:  wrangler secret put <NAME>
+
+# Telegram Bot token from @BotFather — Owner-only, never commit the real value
+TELEGRAM_BOT_TOKEN=1234567890:PASTE_TOKEN_FROM_BOTFATHER
+
+# Random string passed to setWebhook secret_token; Telegram echoes it in a header
+TELEGRAM_WEBHOOK_SECRET=paste-a-long-random-string
+
+# API Client token created in the panel (api_clients) — raw value shown once at creation
+CYBRIX_BOT_API_TOKEN=PASTE_API_CLIENT_TOKEN
+
+# Chat ID that receives CYBRIX reports (Owner's admin chat)
+TELEGRAM_REPORT_CHAT_ID=100000000000
+
+# (optional) panel base URL override for local dev
+# CYBRIX_API_BASE_URL=http://127.0.0.1:8787/api/v1

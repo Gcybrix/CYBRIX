@@ -1,0 +1,3 @@
+# CYBRIX Panel — local dev secrets template (copy to .dev.vars, NEVER commit real values)
+ADMIN_PEPPER=generate_32_random_bytes_base64
+DATA_ENCRYPTION_KEY=generate_32_random_bytes_base64

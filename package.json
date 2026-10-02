@@ -1,0 +1,29 @@
+{
+  "name": "cybrix",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CYBRIX \u2014 self-hosted proxy management panel (monorepo: panel / bot / relay / shared-types)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "npm run test --workspace apps/panel && npm run test --workspace apps/bot && npm run test --workspace apps/relay",
+    "typecheck": "npm run typecheck --workspace apps/panel && npm run typecheck --workspace apps/bot && npm run typecheck --workspace apps/relay",
+    "bot:dev": "npm run dev --workspace apps/bot",
+    "bot:deploy": "npm run deploy --workspace apps/bot",
+    "bot:webhook:set": "npm run webhook:set --workspace apps/bot",
+    "bot:webhook:delete": "npm run webhook:delete --workspace apps/bot",
+    "relay:build": "npm run build --workspace apps/relay",
+    "relay:start": "npm run start --workspace apps/relay",
+    "relay:test": "npm run test --workspace apps/relay",
+    "relay:typecheck": "npm run typecheck --workspace apps/relay",
+    "relay:egress:check": "npm run egress:check --workspace apps/relay",
+    "panel:dev": "npm run dev --workspace apps/panel",
+    "panel:deploy": "npm run deploy --workspace apps/panel",
+    "panel:db:migrate:remote": "npm run db:migrate:remote --workspace apps/panel"
+  }
+}

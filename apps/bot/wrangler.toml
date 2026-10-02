@@ -1,0 +1,24 @@
+#:schema node_modules/wrangler/config-schema.json
+# CYBRIX Telegram Bot — Cloudflare Worker config (Prompt 6 §21)
+# Secrets are NEVER declared here — set them with `wrangler secret put`:
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, CYBRIX_BOT_API_TOKEN
+
+name = "cybrix-bot"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+
+[observability]
+enabled = true
+
+[vars]
+# Non-secret configuration. Points at YOUR panel deployment —
+# deploy-cf-bot.sh patches it automatically from PANEL_URL in .secrets/cybrix.env.
+CYBRIX_API_BASE_URL = "https://panel.your-domain.example/api/v1"
+LOG_LEVEL = "info"
+
+# deploy-cf-bot.sh creates-or-reuses this namespace and patches the ID automatically
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_BY_DEPLOY_SCRIPT"
+
+# NOTE (Prompt 6 §1): the bot has NO D1 binding — it talks to the panel API only.
