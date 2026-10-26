@@ -1,0 +1,24 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bunx tsc --noEmit
+      - name: Unit tests
+        run: bun test packages/testing
+      - name: Build workers
+        run: bash scripts/build.sh
+      - name: Secrets scan
+        run: |
+          ! grep -rEn "(github_pat_[A-Za-z0-9_]{20,}|cfut_[A-Za-z0-9]{20,}|[0-9]{8,10}:AA[A-Za-z0-9_-]{30,})" \
+            --include="*.ts" --include="*.md" --include="*.yml" --include="*.sh" .
