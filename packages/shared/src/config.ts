@@ -2,7 +2,7 @@
 export const BRAND = {
   name: 'CYBRIX',
   slogan: 'Code. Security. Innovation.',
-  version: '1.0.0',
+  version: '1.1.0',
 };
 
 /** Official mandatory channels — enforced by CYBRIX policy on the central platform. */
@@ -19,6 +19,8 @@ export const CREDIT_COSTS: Record<string, number> = {
   vote: 2,
   referral: 2,
   quiz: 3,
+  photo: 3,
+  points: 2,
 };
 
 export const CREDIT_LABELS: Record<string, { fa: string; en: string }> = {
@@ -26,15 +28,18 @@ export const CREDIT_LABELS: Record<string, { fa: string; en: string }> = {
   vote: { fa: '🗳 رأی‌گیری / لایک', en: '🗳 Voting / Likes' },
   referral: { fa: '👥 رقابت دعوت', en: '👥 Referral Contest' },
   quiz: { fa: '🧠 آزمون و مسابقه سؤالی', en: '🧠 Quiz Contest' },
+  photo: { fa: '📸 مسابقه عکس', en: '📸 Photo Contest' },
+  points: { fa: '🏅 رقابت امتیازی', en: '🏅 Points Contest' },
 };
 
 export const SIGNUP_FREE_CREDITS = 10;
 
-export type ChallengeType = 'random' | 'vote' | 'referral' | 'quiz';
+export type ChallengeType = 'random' | 'vote' | 'referral' | 'quiz' | 'photo' | 'points';
 
 export interface ChallengeConfig {
   change_vote: boolean;
   public_counts: boolean;
+  public_page: boolean;
   reward_credits: number;
   extra_channels: string[];
 }
@@ -42,6 +47,7 @@ export interface ChallengeConfig {
 export const DEFAULT_CONFIG: ChallengeConfig = {
   change_vote: true,
   public_counts: true,
+  public_page: false,
   reward_credits: 0,
   extra_channels: [],
 };
@@ -65,6 +71,9 @@ export function parseTehranDateTime(input: string): number | null {
   const ms = Date.UTC(y, mo - 1, d, h, mi) - 3.5 * 3600 * 1000;
   return Math.floor(ms / 1000);
 }
+
+/** Prize delivery deadline for winners to respond (seconds). */
+export const PRIZE_DEADLINE_SEC = 48 * 3600;
 
 export function fmtTehranDateTime(epochSec: number): string {
   const d = new Date((epochSec + 3.5 * 3600) * 1000);

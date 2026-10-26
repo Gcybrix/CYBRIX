@@ -10,8 +10,10 @@ import {
   randHex, sha256Hex, type ChallengeConfig, type ChallengeType,
 } from '../../../packages/shared/src/config';
 import { Tg, kb, userMention } from './tg';
-import { passesJoinGate, mainMenuKeyboard } from './users';
+import { passesJoinGate, mainMenuKeyboard, isOwner } from './users';
 import { spend, refund, getWallet, total, grant } from './wallet';
+import { notify, deliver } from './notify';
+import { PRIZE_DEADLINE_SEC } from '../../../packages/shared/src/config';
 
 export interface ChallengeRow {
   id: number;
@@ -259,7 +261,11 @@ function channelPostText(lang: Lang, ch: ChallengeRow & { description: string })
       ? `\n\n🧠 برای شروع آزمون دکمه زیر را بزنید:`
       : ch.type === 'referral'
         ? `\n\n👥 با دکمه زیر وارد شوید و لینک دعوت بگیرید:`
-        : `\n\n✍️ برای شرکت در قرعه‌کشی دکمه زیر را بزنید:`;
+        : ch.type === 'photo'
+          ? `\n\n📸 برای شرکت، وارد شوید و عکس خود را در بات ارسال کنید:`
+          : ch.type === 'points'
+            ? `\n\n🏅 شرکت کنید و امتیاز بگیرید:`
+            : `\n\n✍️ برای شرکت در قرعه‌کشی دکمه زیر را بزنید:`;
   return `${preview}${btns}`;
 }
 
@@ -298,7 +304,7 @@ export async function publishChallenge(env: Env, tg: Tg, chatId: number, tid: nu
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   )
     .bind(chatIdStr, tid, type, data.title, data.description || '', 'active', data.end_at, 'Asia/Tehran',
-      data.winners_count, data.prizes || '', '', '1', JSON.stringify({ ...DEFAULT_CONFIG }), commit, salt, cost, ts)
+      data.winners_count, data.prizes || '', '', '1', JSON.stringify({ ...DEFAULT_CONFIG, public_page: !!data.public_page }), commit, salt, cost, ts)
     .run();
   const chId = ins.meta?.last_row_id;
   if (!chId) {
@@ -318,6 +324,14 @@ export async function publishChallenge(env: Env, tg: Tg, chatId: number, tid: nu
 
   const row = await env.DB.prepare(`SELECT * FROM challenges WHERE id=?`).bind(chId).first<ChallengeRow>();
   if (!row) { await tg.sendMessage(chatId, t(lang, 'err_generic')); return; }
+
+  // per-rank prize rows (drives delivery tracking)
+  const prizeLines = (row.prizes || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  for (let i = 0; i < Math.min(prizeLines.length, row.winners_count); i++) {
+    const [ptitle, ...rest] = prizeLines[i].split(':');
+    await env.DB.prepare(`INSERT OR IGNORE INTO prizes (challenge_id, rank, title, value, status) VALUES (?,?,?,?, 'pending')`)
+      .bind(chId, i + 1, ptitle.trim().slice(0, 200), rest.join(':').trim().slice(0, 200)).run();
+  }
 
   const post = await tg.sendMessage(chatIdStr, channelPostText(lang, row as any), channelPostButtons({ id: chId, type }, me?.username ?? 'cybrix_bot'));
   if (!post) {
@@ -358,22 +372,70 @@ export async function handleStartChallenge(env: Env, tg: Tg, chatId: number, tid
     return;
   }
 
-  // membership gate (mandatory + extra channels)
-  const ok = await passesJoinGate(env, tg, tid, cfg.extra_channels);
-  if (!ok) {
-    await env.DB.prepare(`UPDATE participants SET status='pending' WHERE challenge_id=? AND telegram_id=?`).bind(chId, tid).run();
-    await tg.sendMessage(chatId, t(lang, 'ch_need_join'), {
-      reply_markup: { inline_keyboard: [[{ text: t(lang, 'check_again'), callback_data: `ch:rejoin:${chId}` }]] },
-    });
-    return;
+  if (fresh) {
+    // membership gate (mandatory + extra channels)
+    const ok = await passesJoinGate(env, tg, tid, cfg.extra_channels);
+    if (!ok) {
+      await env.DB.prepare(`UPDATE participants SET status='pending' WHERE challenge_id=? AND telegram_id=?`).bind(chId, tid).run();
+      await tg.sendMessage(chatId, t(lang, 'ch_need_join'), {
+        reply_markup: { inline_keyboard: [[{ text: t(lang, 'check_again'), callback_data: `ch:rejoin:${chId}` }]] },
+      });
+      return;
+    }
+    await env.DB.prepare(`UPDATE participants SET status='active' WHERE challenge_id=? AND telegram_id=?`).bind(chId, tid).run();
+    await audit(env.DB, tid, 'challenge.join', 'challenge', chId, ch.type);
+  } else if (await participantsStatusPending(env, ch, tid)) {
+    // already joined but pending — still needs gate before anything else
+    const ok = await passesJoinGate(env, tg, tid, cfg.extra_channels);
+    if (!ok) {
+      await tg.sendMessage(chatId, t(lang, 'ch_need_join'), {
+        reply_markup: { inline_keyboard: [[{ text: t(lang, 'check_again'), callback_data: `ch:rejoin:${chId}` }]] },
+      });
+      return;
+    }
+    await env.DB.prepare(`UPDATE participants SET status='active' WHERE challenge_id=? AND telegram_id=?`).bind(chId, tid).run();
   }
-  await env.DB.prepare(`UPDATE participants SET status='active' WHERE challenge_id=? AND telegram_id=?`).bind(chId, tid).run();
-  await audit(env.DB, tid, 'challenge.join', 'challenge', chId, ch.type);
 
   if (ch.type === 'referral') { await sendRefLink(env, tg, chatId, tid, lang, ch); return; }
   if (ch.type === 'vote') { await tg.sendMessage(chatId, t(lang, 'ch_joined', { title: esc(ch.title) })); await openVoteList(env, tg, chatId, ch, lang, 0); return; }
+  if (ch.type === 'photo') { await tg.sendMessage(chatId, t(lang, 'ch_joined', { title: esc(ch.title) })); await askPhotoUpload(env, tg, chatId, tid, lang, ch); return; }
   if (ch.type === 'quiz') { await tg.sendMessage(chatId, t(lang, 'ch_joined', { title: esc(ch.title) })); await askQuizQuestion(env, tg, chatId, tid, ch, 0); return; }
   await tg.sendMessage(chatId, t(lang, 'ch_joined', { title: esc(ch.title) }));
+}
+
+async function participantsStatusPending(env: Env, ch: ChallengeRow, tid: number): Promise<boolean> {
+  const r = await env.DB.prepare(`SELECT status FROM participants WHERE challenge_id=? AND telegram_id=?`).bind(ch.id, tid).first<{ status: string }>();
+  return r?.status === 'pending';
+}
+
+/* --------------------------------- Photo ---------------------------------- */
+
+export async function askPhotoUpload(env: Env, tg: Tg, chatId: number, tid: number, lang: Lang, ch: ChallengeRow): Promise<void> {
+  await setWizard(env, tid, 'photo_upload' as any, { photo_challenge: ch.id });
+  await tg.sendMessage(chatId, t(lang, 'photo_upload_ask'));
+}
+
+/** Upsert the caller's photo entry for a photo challenge. */
+export async function handlePhotoEntry(env: Env, tg: Tg, chatId: number, tid: number, lang: Lang, chId: number, fileId: string, caption: string): Promise<void> {
+  const ch = await env.DB.prepare(`SELECT * FROM challenges WHERE id=?`).bind(chId).first<ChallengeRow>();
+  if (!ch || ch.status !== 'active' || ch.type !== 'photo') {
+    await setWizard(env, tid, null, {});
+    await tg.sendMessage(chatId, t(lang, 'ch_ended'));
+    return;
+  }
+  const p = await env.DB.prepare(`SELECT status FROM participants WHERE challenge_id=? AND telegram_id=?`).bind(chId, tid).first<{ status: string }>();
+  if (!p || p.status === 'disqualified') {
+    await setWizard(env, tid, null, {});
+    await tg.sendMessage(chatId, t(lang, 'ch_ended'));
+    return;
+  }
+  await env.DB.prepare(
+    `INSERT INTO photo_entries (challenge_id, telegram_id, file_id, caption, created_at) VALUES (?,?,?,?,?)
+     ON CONFLICT(challenge_id, telegram_id) DO UPDATE SET file_id=excluded.file_id, caption=excluded.caption, created_at=excluded.created_at`
+  ).bind(chId, tid, fileId, caption.slice(0, 500), now()).run();
+  await setWizard(env, tid, null, {});
+  await audit(env.DB, tid, 'photo.entry', 'challenge', chId, fileId.slice(0, 40));
+  await tg.sendMessage(chatId, t(lang, 'photo_saved', { title: esc(ch.title) }));
 }
 
 export async function rejoinCheck(env: Env, tg: Tg, chatId: number, tid: number, cbId: string, chId: number) {
@@ -396,6 +458,7 @@ async function sendRefLink(env: Env, tg: Tg, chatId: number, tid: number, lang: 
 /* ---------------------------------- Votes --------------------------------- */
 
 export async function openVoteList(env: Env, tg: Tg, chatId: number, ch: ChallengeRow, lang: Lang, page: number) {
+  const cfg = parseJson<ChallengeConfig>(ch.config, DEFAULT_CONFIG);
   const parts = await env.DB
     .prepare(
       `SELECT p.id, p.telegram_id, u.first_name, u.username,
@@ -409,21 +472,33 @@ export async function openVoteList(env: Env, tg: Tg, chatId: number, ch: Challen
   const totalR = await env.DB.prepare(`SELECT COUNT(*) AS n FROM participants WHERE challenge_id=? AND status='active'`).bind(ch.id).first<{ n: number }>();
   if (!totalR?.n) { await tg.sendMessage(chatId, t(lang, 'vote_none')); return; }
 
+  const showCounts = cfg.public_counts !== false;
   const rows = parts.results.map((p) => [
-    { text: `${userMention(p)} ${ch.type === 'vote' ? `· ${p.votes} رأی` : ''}`, callback_data: `ch:votefor:${ch.id}:${p.id}` },
+    { text: `${ch.type === 'photo' ? '📸 ' : ''}${userMention(p)} ${showCounts && ch.type === 'vote' ? `· ${p.votes} رأی` : ''}`, callback_data: `ch:votefor:${ch.id}:${p.id}` },
   ]);
   const nav: any[] = [];
   if (page > 0) nav.push({ text: '◀️', callback_data: `ch:vote:${ch.id}:${page - 1}` });
   if ((page + 1) * 6 < (totalR?.n ?? 0)) nav.push({ text: '▶️', callback_data: `ch:vote:${ch.id}:${page + 1}` });
   if (nav.length) rows.push(nav);
-  await tg.sendMessage(chatId, t(lang, 'vote_intro', { title: esc(ch.title) }), kb(rows));
+  const intro = showCounts ? t(lang, 'vote_intro', { title: esc(ch.title) }) : `${t(lang, 'vote_intro', { title: esc(ch.title) })}\n\n${t(lang, 'vote_hidden')}`;
+  await tg.sendMessage(chatId, intro, kb(rows));
 }
 
 export async function castVote(env: Env, tg: Tg, chatId: number, tid: number, cbId: string, chId: number, targetId: number) {
   const ch = await env.DB.prepare(`SELECT * FROM challenges WHERE id=?`).bind(chId).first<ChallengeRow>();
   if (!ch || ch.status !== 'active') { await tg.answerCallback(cbId, t('fa', 'ch_ended'), true); return; }
   const cfg = parseJson<ChallengeConfig>(ch.config, DEFAULT_CONFIG);
-  const existing = await env.DB.prepare(`SELECT id, target_id FROM votes WHERE challenge_id=? AND voter_tid=?`).bind(chId, tid).first<{ id: number; target_id: number }>();
+
+  // anti-fraud: voter must pass the join gate; self-vote blocked
+  if (!(await passesJoinGate(env, tg, tid, cfg.extra_channels))) {
+    await tg.answerCallback(cbId, t('fa', 'vote_need_gate'), true);
+    return;
+  }
+  const target = await env.DB.prepare(`SELECT telegram_id FROM participants WHERE id=? AND challenge_id=?`).bind(targetId, chId).first<{ telegram_id: number }>();
+  if (!target) { await tg.answerCallback(cbId, t('fa', 'err_generic'), true); return; }
+  if (target.telegram_id === tid) { await tg.answerCallback(cbId, t('fa', 'vote_self'), true); return; }
+
+  const existing = await env.DB.prepare(`SELECT id, target_id, changed_at FROM votes WHERE challenge_id=? AND voter_tid=?`).bind(chId, tid).first<{ id: number; target_id: number; changed_at: number | null }>();
 
   if (existing && existing.target_id === targetId) { await tg.answerCallback(cbId, t('fa', 'ch_already'), true); return; }
   if (existing && !cfg.change_vote) { await tg.answerCallback(cbId, t('fa', 'ch_already'), true); return; }
@@ -432,10 +507,17 @@ export async function castVote(env: Env, tg: Tg, chatId: number, tid: number, cb
   if (existing) {
     await env.DB.prepare(`UPDATE votes SET target_id=?, status='active', changed_at=? WHERE id=?`).bind(targetId, ts, existing.id).run();
     await audit(env.DB, tid, 'vote.change', 'challenge', chId, `${existing.target_id}->${targetId}`);
+    // risk: >3 vote changes within 10 minutes raises the user's risk score
+    const recentChanges = await env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM audit_events WHERE actor_tid=? AND action='vote.change' AND created_at > ?`)
+      .bind(tid, ts - 600).first<{ n: number }>();
+    if ((recentChanges?.n ?? 0) > 3) {
+      await env.DB.prepare(`UPDATE users SET risk_score = risk_score + 5 WHERE telegram_id=?`).bind(tid).run();
+      await audit(env.DB, tid, 'antifraud.vote_churn', 'challenge', chId, `changes=${recentChanges?.n}`);
+    }
   } else {
     await env.DB.prepare(`INSERT INTO votes (challenge_id, voter_tid, target_id, created_at) VALUES (?,?,?,?)`).bind(chId, tid, targetId, ts).run();
   }
-  await env.DB.prepare(`INSERT OR IGNORE INTO participants (challenge_id, telegram_id, joined_at) VALUES (?,?,?)`).bind(chId, tid, ts).run();
   const targetName = await env.DB
     .prepare(`SELECT u.first_name, u.username FROM participants p JOIN users u ON u.telegram_id=p.telegram_id WHERE p.id=?`)
     .bind(targetId).first<{ first_name: string; username: string }>();
@@ -515,18 +597,20 @@ export async function finishChallenge(env: Env, tg: Tg, ch: ChallengeRow): Promi
   if (ch.status !== 'active') return;
   const ts = now();
   const participants = await env.DB
-    .prepare(`SELECT telegram_id, score FROM participants WHERE challenge_id=? AND status IN ('active','pending')`)
-    .bind(ch.id).all<{ telegram_id: number; score: number }>();
+    .prepare(`SELECT telegram_id, score, status FROM participants WHERE challenge_id=? AND status IN ('active','pending')`)
+    .bind(ch.id).all<{ telegram_id: number; score: number; status: string }>();
 
-  // Final membership re-check for pending/active (documented: Telegram does not push member-leave events reliably)
+  // Final membership re-check. Telegram does not push member-leave events reliably.
+  // Subrequest budget: pending entries are always re-checked; 'active' entries are capped
+  // (they already passed the gate at join time) to stay inside Workers limits.
   const cfg = parseJson<ChallengeConfig>(ch.config, DEFAULT_CONFIG);
-  for (const p of participants.results) {
-    if (ch.type !== 'quiz') {
-      const ok = await passesJoinGate(env, tg, p.telegram_id, cfg.extra_channels);
-      if (!ok) {
-        await env.DB.prepare(`UPDATE participants SET status='disqualified', score=0 WHERE challenge_id=? AND telegram_id=?`).bind(ch.id, p.telegram_id).run();
-        await audit(env.DB, null, 'participant.disqualified', 'challenge', ch.id, String(p.telegram_id));
-      }
+  const pending = participants.results.filter((p) => p.status === 'pending');
+  const active = participants.results.filter((p) => p.status === 'active').slice(0, 30);
+  for (const p of [...pending, ...active]) {
+    const ok = await passesJoinGate(env, tg, p.telegram_id, cfg.extra_channels);
+    if (!ok) {
+      await env.DB.prepare(`UPDATE participants SET status='disqualified', score=0 WHERE challenge_id=? AND telegram_id=?`).bind(ch.id, p.telegram_id).run();
+      await audit(env.DB, null, 'participant.disqualified', 'challenge', ch.id, String(p.telegram_id));
     }
   }
 
@@ -545,9 +629,9 @@ export async function finishChallenge(env: Env, tg: Tg, ch: ChallengeRow): Promi
     }
     ranked.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   } else {
-    // score-based: vote counts / referral counts / quiz scores; ties broken by hash for verifiability
+    // score-based: vote counts / referral counts / quiz & points scores; ties broken by hash for verifiability
     let scores: Array<{ tid: number; sc: number }> = [];
-    if (ch.type === 'vote') {
+    if (ch.type === 'vote' || ch.type === 'photo') {
       const rows = await env.DB.prepare(
         `SELECT v.target_id AS pid, COUNT(*) AS sc FROM votes v WHERE v.challenge_id=? AND v.status='active' GROUP BY v.target_id`
       ).bind(ch.id).all<{ pid: number; sc: number }>();
@@ -570,16 +654,28 @@ export async function finishChallenge(env: Env, tg: Tg, ch: ChallengeRow): Promi
   }
 
   const winners = ranked.slice(0, ch.winners_count);
+  const alternates = ranked.slice(ch.winners_count, ch.winners_count + 2); // up to 2 backups
   const prizes = (ch.prizes || '').split('\n').map((s) => s.trim()).filter(Boolean);
   const method = ch.type === 'random' ? 'commit-reveal hash sort' : `score + hash tiebreak`;
 
-  await env.DB.batch([
+  const stmts = [
     env.DB.prepare(`UPDATE challenges SET status='finished', snapshot_hash=? WHERE id=?`).bind(snapshotHash, ch.id),
-    env.DB.prepare(`INSERT OR IGNORE INTO prizes (challenge_id, rank, title, value, status) VALUES (?,?,?,?,?)`).bind(ch.id, 0, '-', '', 'defined'),
-  ].concat(winners.map((w, i) =>
-    env.DB.prepare(`INSERT INTO winners (challenge_id, telegram_id, rank, selected_at, method, proof) VALUES (?,?,?,?,?,?)`)
-      .bind(ch.id, w.tid, i + 1, ts, method, w.key)
-  )));
+  ].concat(
+    winners.map((w, i) =>
+      env.DB.prepare(`INSERT INTO winners (challenge_id, telegram_id, rank, selected_at, method, proof) VALUES (?,?,?,?,?,?)`)
+        .bind(ch.id, w.tid, i + 1, ts, method, w.key)
+    ),
+    alternates.map((w, i) =>
+      env.DB.prepare(`INSERT INTO winners (challenge_id, telegram_id, rank, selected_at, method, proof) VALUES (?,?,?,?,?,?)`)
+        .bind(ch.id, w.tid, ch.winners_count + i + 1, ts, 'alternate', w.key)
+    ),
+    // prize delivery tracking rows (deadline to respond before replacement)
+    winners.map((w, i) =>
+      env.DB.prepare(`INSERT OR IGNORE INTO prize_deliveries (challenge_id, rank, winner_tid, status, deadline_at) VALUES (?,?,?,?,?)`)
+        .bind(ch.id, i + 1, w.tid, 'pending', ts + PRIZE_DEADLINE_SEC)
+    )
+  );
+  await env.DB.batch(stmts);
 
   // reward credits if configured
   if (cfg.reward_credits > 0) {
@@ -604,10 +700,16 @@ export async function finishChallenge(env: Env, tg: Tg, ch: ChallengeRow): Promi
     commit: ch.commit_hash ?? '-', salt: ch.commit_salt ?? '-', snapshot: snapshotHash,
   });
   if (ch.message_id) await tg.sendMessage(ch.channel_chat_id, announce);
-  // DM winners (best-effort)
+  // DM winners (best-effort) with response deadline + delivery tracking
   for (let i = 0; i < winners.length; i++) {
-    await tg.sendMessage(winners[i].tid, t('fa', 'winner_dm', { title: esc(ch.title), rank: i + 1, prize: esc(prizes[i] ?? '-') }));
+    const dm = t('fa', 'winner_dm_v2', {
+      title: esc(ch.title), rank: i + 1, prize: esc(prizes[i] ?? '-'),
+      deadline: fmtTehranDateTime(ts + PRIZE_DEADLINE_SEC), ch: ch.id,
+    });
+    const nid = await notify(env, winners[i].tid, 'winner_dm', dm);
+    if (nid) await deliver(env, (tid2, text) => tg.sendMessage(tid2, text), nid, winners[i].tid, dm);
   }
+  await notify(env, ch.created_by, 'challenge_finished', t('fa', 'result_announce', { title: esc(ch.title), winners_list: lines.join('\n'), commit: ch.commit_hash ?? '-', salt: '-', snapshot: snapshotHash }));
   await audit(env.DB, null, 'challenge.finish', 'challenge', ch.id, `${method}:${winners.length}`);
 }
 
@@ -641,5 +743,66 @@ export async function sweepExpired(env: Env, tg: Tg): Promise<number> {
     await tg.sendMessage(s.channel_chat_id, t('fa', 'reminder', { title: esc(s.title) }));
     await env.DB.prepare(`UPDATE challenges SET reminded=1 WHERE id=?`).bind(s.id).run();
   }
+  // prize delivery deadlines: mark expired + notify organizer (replacement stays manual)
+  const expiredD = await env.DB
+    .prepare(`SELECT d.id, d.rank, d.challenge_id, d.winner_tid, c.created_by, c.title FROM prize_deliveries d JOIN challenges c ON c.id=d.challenge_id
+              WHERE d.status='pending' AND d.deadline_at <= ? LIMIT 10`)
+    .bind(ts).all<{ id: number; rank: number; challenge_id: number; winner_tid: number; created_by: number; title: string }>();
+  for (const d of expiredD.results) {
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE prize_deliveries SET status='expired', note='deadline passed' WHERE id=? AND status='pending'`).bind(d.id),
+      env.DB.prepare(`UPDATE prizes SET status='expired' WHERE challenge_id=? AND rank=? AND status='pending'`).bind(d.challenge_id, d.rank),
+    ]);
+    await audit(env.DB, null, 'prize.expired', 'challenge', d.challenge_id, `rank=${d.rank}`);
+    await tg.sendMessage(d.created_by, t('fa', 'prize_expired_note', { rank: d.rank, ch: d.challenge_id }));
+  }
   return done;
+}
+
+/* ---------------------- Organizer tools: copy / page / score ---------------- */
+
+/** Prefill the create-wizard from an existing challenge (creator or owner only). */
+export async function copyChallenge(env: Env, tg: Tg, chatId: number, tid: number, lang: Lang, chId: number): Promise<void> {
+  const ch = await env.DB.prepare(`SELECT * FROM challenges WHERE id=?`).bind(chId).first<ChallengeRow>();
+  if (!ch) { await tg.sendMessage(chatId, t(lang, 'copy_usage')); return; }
+  if (ch.created_by !== tid && !(await isOwner(env, tid))) { await tg.sendMessage(chatId, t(lang, 'copy_denied')); return; }
+  const data: Record<string, any> = {
+    type: ch.type, title: `${ch.title} (کپی)`, description: ch.description,
+    channel_chat_id: ch.channel_chat_id,
+    channel_title: (await env.DB.prepare(`SELECT title FROM channels WHERE chat_id=?`).bind(ch.channel_chat_id).first<{ title: string }>())?.title || ch.channel_chat_id,
+    winners_count: ch.winners_count, prizes: ch.prizes || '',
+    end_at: now() + 7 * 86400,
+  };
+  if (ch.type === 'quiz') {
+    const qs = await env.DB.prepare(`SELECT text, options, correct_idx FROM quiz_questions WHERE challenge_id=? ORDER BY idx`).bind(chId).all<{ text: string; options: string; correct_idx: number }>();
+    data.questions = qs.results.map((q) => ({ text: q.text, options: parseJson<string[]>(q.options, []), correct_idx: q.correct_idx }));
+  }
+  await setWizard(env, tid, 'confirm', data);
+  await tg.sendMessage(chatId, t(lang, 'copy_ok', { ch: chId }));
+  await confirmPreview(env, tg, chatId, tid, lang, data);
+}
+
+/** Toggle the public web page of a challenge (creator or owner only). */
+export async function setPublicPage(env: Env, tg: Tg, chatId: number, tid: number, lang: Lang, chId: number, on: boolean, panelUrl: string): Promise<void> {
+  const ch = await env.DB.prepare(`SELECT id, created_by, config FROM challenges WHERE id=?`).bind(chId).first<{ id: number; created_by: number; config: string }>();
+  if (!ch) { await tg.sendMessage(chatId, t(lang, 'setpage_usage')); return; }
+  if (ch.created_by !== tid && !(await isOwner(env, tid))) { await tg.sendMessage(chatId, t(lang, 'setpage_denied')); return; }
+  const cfg = { ...DEFAULT_CONFIG, ...parseJson<ChallengeConfig>(ch.config, DEFAULT_CONFIG), public_page: on };
+  await env.DB.prepare(`UPDATE challenges SET config=? WHERE id=?`).bind(JSON.stringify(cfg), chId).run();
+  await audit(env.DB, tid, 'challenge.set_public_page', 'challenge', chId, on ? 'on' : 'off');
+  await tg.sendMessage(chatId, t(lang, 'setpage_ok', { ch: chId, state: on ? (lang === 'fa' ? 'روشن' : 'ON') : (lang === 'fa' ? 'خاموش' : 'OFF'), url: `${panelUrl}/c/${chId}` }));
+}
+
+/** Manual score entry for points contests (creator or owner only). */
+export async function setScore(env: Env, tg: Tg, chatId: number, tid: number, lang: Lang, chId: number, targetTid: number, score: number): Promise<void> {
+  const ch = await env.DB.prepare(`SELECT id, created_by, type, status FROM challenges WHERE id=?`).bind(chId).first<{ id: number; created_by: number; type: string; status: string }>();
+  if (!ch) { await tg.sendMessage(chatId, t(lang, 'setscore_usage')); return; }
+  if (ch.created_by !== tid && !(await isOwner(env, tid))) { await tg.sendMessage(chatId, t(lang, 'setscore_denied')); return; }
+  if (ch.type !== 'points') { await tg.sendMessage(chatId, t(lang, 'setscore_usage')); return; }
+  if (ch.status !== 'active') { await tg.sendMessage(chatId, t(lang, 'ch_ended')); return; }
+  if (!Number.isInteger(score) || score < 0 || score > 100000) { await tg.sendMessage(chatId, t(lang, 'setscore_usage')); return; }
+  await env.DB.prepare(`INSERT INTO participants (challenge_id, telegram_id, joined_at, score) VALUES (?,?,?,?)
+    ON CONFLICT(challenge_id, telegram_id) DO UPDATE SET score=excluded.score`).bind(chId, targetTid, now(), score).run();
+  await audit(env.DB, tid, 'points.set_score', 'challenge', chId, `${targetTid}=${score}`);
+  await tg.sendMessage(chatId, t(lang, 'setscore_ok', { user: `<code>${targetTid}</code>`, ch: chId, score }));
 }

@@ -153,6 +153,16 @@ export function rateLimited(tid: number): boolean {
   return false;
 }
 
+export async function listMyChannels(env: Env, tg: Tg, chatId: number, tid: number, lang: Lang): Promise<void> {
+  const chans = await env.DB
+    .prepare(`SELECT title, chat_id FROM channels WHERE owner_tid=? AND status='active' ORDER BY id DESC`)
+    .bind(tid).all<{ title: string; chat_id: string }>();
+  const rows: any = [[{ text: '➕ افزودن کانال / Add', callback_data: 'menu:chadd' }]];
+  await tg.sendMessage(chatId, chans.results.length
+    ? t(lang, 'channels_list', { list: chans.results.map((c) => `• ${c.title || c.chat_id}`).join('\n') })
+    : t(lang, 'channels_none'), kb(rows));
+}
+
 export function mainMenuKeyboard(lang: Lang, role: string) {
   const rows: Array<Array<{ text: string; callback_data: string }>> = [
     [{ text: t(lang, 'btn_challenges'), callback_data: 'menu:challenges' }],

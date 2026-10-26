@@ -16,7 +16,7 @@ for (const line of readFileSync(`${ROOT}secrets.local.env`, 'utf8').split('\n'))
 const CF = secrets.CF_TOKEN, AID = secrets.CF_ACCOUNT_ID;
 if (!CF || !AID) throw new Error('secrets.local.env missing CF credentials');
 
-const V = '1.0.0';
+const V = '1.1.0';
 const WEBHOOK_SECRET_CENTRAL = secrets.WH_CENTRAL || crypto.randomUUID().replace(/-/g, '');
 const WEBHOOK_SECRET_BUILDER = secrets.WH_BUILDER || crypto.randomUUID().replace(/-/g, '');
 const WEBHOOK_SECRET_DEMO = secrets.WH_DEMO || crypto.randomUUID().replace(/-/g, '');

@@ -4,16 +4,18 @@ import { ensureSchema, now, audit } from './db';
 import { Tg, kb } from './tg';
 import { t, type Lang } from '../../../packages/shared/src/i18n';
 import {
-  ensureUser, isOwner, passesJoinGate, rateLimited, joinGateKeyboard, mainMenuKeyboard, mandatoryChannels,
+  ensureUser, isOwner, passesJoinGate, rateLimited, joinGateKeyboard, mainMenuKeyboard, mandatoryChannels, listMyChannels,
 } from './users';
 import { getWallet, total, txHistory, redeemCode } from './wallet';
 import {
   wizardStart, wizardInput, wizardCallback, handleStartChallenge, rejoinCheck, castVote, answerQuiz,
-  handleReferral, sweepExpired, esc, getWizard,
+  handleReferral, sweepExpired, esc, getWizard, handlePhotoEntry, copyChallenge, setPublicPage, setScore,
 } from './challenges';
 import {
   makePanelCode, broadcast, adminGrant, makeGiftCode, myStats, openTicketsList, replyTicket, platformStats,
+  submitReport, listReports, closeReport, prizesList, prizeDone, redrawWinner, claimPrize,
 } from './admin';
+import { recentFor, markRead } from './notify';
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
 const PANEL_URL_FALLBACK = 'https://cybrix-web-panel.official-cybrix.workers.dev';
@@ -163,6 +165,17 @@ async function handleUpdate(env: Env, u: TgUpdate): Promise<void> {
 
   const text = (msg.text || '').trim();
 
+  // photo entries for photo contests (wizard state routes the photo)
+  if (msg.photo?.length) {
+    const wizP = await getWizard(env, tid);
+    if (wizP && (wizP.step as string) === 'photo_upload') {
+      const dataP = JSON.parse(wizP.data || '{}');
+      const best = msg.photo[msg.photo.length - 1];
+      await handlePhotoEntry(env, tg, chatId, tid, lang, Number(dataP.photo_challenge), best.file_id, msg.caption || '');
+      return;
+    }
+  }
+
   // /start with deep-link payloads: ch{id} | ref{chid}_{inviter}
   if (text.startsWith('/start')) {
     const payload = text.split(' ')[1] || '';
@@ -201,6 +214,16 @@ async function handleUpdate(env: Env, u: TgUpdate): Promise<void> {
 
   // challenge wizard text input
   if (!isCommand && wiz && wiz.step !== 'confirm' && !['channel_add', 'support_msg', 'broadcast_msg'].includes(wiz.step)) {
+    if (wiz.step === ('photo_upload' as any)) {
+      if (text === '/cancel') {
+        const { setWizard } = await import('./challenges');
+        await setWizard(env, tid, null, {});
+        await tg.sendMessage(chatId, t(lang, 'wz_cancelled'), mainMenuKeyboard(lang, 'user'));
+        return;
+      }
+      await tg.sendMessage(chatId, t(lang, 'photo_upload_ask'));
+      return;
+    }
     if (text === '/cancel') {
       const { setWizard } = await import('./challenges');
       await setWizard(env, tid, null, {});
@@ -235,11 +258,7 @@ async function handleUpdate(env: Env, u: TgUpdate): Promise<void> {
       ]));
       return;
     case '/mychannels': {
-      const chans = await env.DB.prepare(`SELECT title, chat_id FROM channels WHERE owner_tid=? AND status='active' ORDER BY id DESC`).bind(tid).all<{ title: string; chat_id: string }>();
-      const rows: any = [[{ text: '➕ افزودن کانال / Add', callback_data: 'menu:chadd' }]];
-      await tg.sendMessage(chatId, chans.results.length
-        ? t(lang, 'channels_list', { list: chans.results.map((c) => `• ${esc(c.title || c.chat_id)}`).join('\n') })
-        : t(lang, 'channels_none'), kb(rows));
+      await listMyChannels(env, tg, chatId, tid, lang);
       return;
     }
     case '/create':
@@ -257,13 +276,93 @@ async function handleUpdate(env: Env, u: TgUpdate): Promise<void> {
     case '/redeem': {
       const code = text.split(' ')[1] || '';
       const amt = code ? await redeemCode(env, tid, code) : null;
-      await tg.sendMessage(chatId, amt ? t(lang, 'redeem_ok', { amount: amt }) : t(lang, 'redeem_bad'));
+      if (amt === 'dup') await tg.sendMessage(chatId, t(lang, 'redeem_dup'));
+      else await tg.sendMessage(chatId, amt ? t(lang, 'redeem_ok', { amount: amt }) : t(lang, 'redeem_bad'));
+      return;
+    }
+    case '/notifications': {
+      const rowsN = await recentFor(env, tid, 10);
+      await markRead(env, tid);
+      await tg.sendMessage(chatId, rowsN.results.length
+        ? t(lang, 'notif_list', { list: rowsN.results.map((n) => `• ${n.text.slice(0, 160).replace(/<[^>]+>/g, '')}`).join('\n') })
+        : t(lang, 'notif_none'));
+      return;
+    }
+    case '/report': {
+      const aR = text.split(' ').slice(1);
+      const chIdR = parseInt(aR[0], 10);
+      const reasonR = aR.slice(1).join(' ').trim();
+      if (!Number.isInteger(chIdR) || !reasonR) { await tg.sendMessage(chatId, t(lang, 'report_usage')); return; }
+      await submitReport(env, tg, chatId, tid, lang, chIdR, reasonR);
+      return;
+    }
+    case '/claim': {
+      const chIdC = parseInt(text.split(' ')[1] || '', 10);
+      if (!Number.isInteger(chIdC)) { await tg.sendMessage(chatId, t(lang, 'claim_usage')); return; }
+      await claimPrize(env, tg, chatId, tid, lang, chIdC);
+      return;
+    }
+    case '/copy': {
+      const chIdK = parseInt(text.split(' ')[1] || '', 10);
+      if (!Number.isInteger(chIdK)) { await tg.sendMessage(chatId, t(lang, 'copy_usage')); return; }
+      await copyChallenge(env, tg, chatId, tid, lang, chIdK);
+      return;
+    }
+    case '/setpage': {
+      const aS = text.split(' ').slice(1);
+      const chIdS = parseInt(aS[0], 10);
+      const mode = (aS[1] || '').toLowerCase();
+      if (!Number.isInteger(chIdS) || !['on', 'off'].includes(mode)) { await tg.sendMessage(chatId, t(lang, 'setpage_usage')); return; }
+      const panelUrl = (env as any).PANEL_URL || PANEL_URL_FALLBACK;
+      await setPublicPage(env, tg, chatId, tid, lang, chIdS, mode === 'on', panelUrl);
+      return;
+    }
+    case '/setscore': {
+      const aQ = text.split(' ').slice(1);
+      const chIdQ = parseInt(aQ[0], 10);
+      const targetTid = parseInt(aQ[1], 10);
+      const scoreQ = parseInt(aQ[2], 10);
+      if (!Number.isInteger(chIdQ) || !Number.isInteger(targetTid) || !Number.isInteger(scoreQ)) { await tg.sendMessage(chatId, t(lang, 'setscore_usage')); return; }
+      await setScore(env, tg, chatId, tid, lang, chIdQ, targetTid, scoreQ);
       return;
     }
     // owner commands
     case '/stats':
       if (await isOwner(env, tid)) await tg.sendMessage(chatId, `<pre>${await platformStats(env)}</pre>`);
       return;
+    case '/reports':
+      await listReports(env, tg, chatId, tid, lang);
+      return;
+    case '/reportclose': {
+      const aC = text.split(' ').slice(1);
+      const idC = parseInt(aC[0], 10);
+      if (!Number.isInteger(idC)) { await tg.sendMessage(chatId, t(lang, 'report_close_usage')); return; }
+      await closeReport(env, tg, chatId, tid, lang, idC, aC[1] || '');
+      return;
+    }
+    case '/prizes': {
+      const chIdZ = parseInt(text.split(' ')[1] || '', 10);
+      if (!Number.isInteger(chIdZ)) { await tg.sendMessage(chatId, t(lang, 'prizes_none')); return; }
+      await prizesList(env, tg, chatId, tid, lang, chIdZ);
+      return;
+    }
+    case '/prizedone': {
+      const aD = text.split(' ').slice(1);
+      const chIdD = parseInt(aD[0], 10);
+      const rankD = parseInt(aD[1], 10);
+      if (!Number.isInteger(chIdD) || !Number.isInteger(rankD)) { await tg.sendMessage(chatId, t(lang, 'prizedone_usage')); return; }
+      await prizeDone(env, tg, chatId, tid, lang, chIdD, rankD);
+      return;
+    }
+    case '/redraw': {
+      const aW = text.split(' ').slice(1);
+      const chIdW = parseInt(aW[0], 10);
+      const rankW = parseInt(aW[1], 10);
+      const reasonW = aW.slice(2).join(' ').trim();
+      if (!Number.isInteger(chIdW) || !Number.isInteger(rankW) || !reasonW) { await tg.sendMessage(chatId, t(lang, 'redraw_usage')); return; }
+      await redrawWinner(env, tg, chatId, tid, lang, chIdW, rankW, reasonW);
+      return;
+    }
     case '/grant':
       await adminGrant(env, tg, chatId, tid, text.split(' ').slice(1));
       return;
@@ -314,6 +413,10 @@ async function handleCallback(env: Env, tg: Tg, cb: TgCallbackQuery): Promise<vo
   }
 
   if (data === 'menu:start' || data.startsWith('menu:') || data === 'noop') {
+    if (data === 'noop') {
+      await tg.answerCallback(cb.id, '🎟 از دستور /redeem CODE استفاده کنید', true);
+      return;
+    }
     if (data === 'menu:start') {
       const gate = await passesJoinGate(env, tg, tid);
       if (!gate && !(await isOwner(env, tid))) {
@@ -335,7 +438,7 @@ async function handleCallback(env: Env, tg: Tg, cb: TgCallbackQuery): Promise<vo
         return;
       }
       case 'menu:mychannels':
-        await tg.sendMessage(chatId, t(lang, 'channel_add'));
+        await listMyChannels(env, tg, chatId, tid, lang);
         return;
       case 'menu:chadd': {
         await env.DB.prepare(`INSERT INTO wizard_state (telegram_id, step, data, updated_at) VALUES (?,?,?,?)

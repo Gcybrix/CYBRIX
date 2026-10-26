@@ -24,12 +24,22 @@ export interface TgChat {
   username?: string;
 }
 
+export interface TgPhotoSize {
+  file_id: string;
+  file_unique_id: string;
+  width: number;
+  height: number;
+  file_size?: number;
+}
+
 export interface TgMessage {
   message_id: number;
   from?: TgUser;
   chat: TgChat;
   date: number;
   text?: string;
+  photo?: TgPhotoSize[];
+  caption?: string;
   forward_from_chat?: TgChat;
   reply_to_message?: TgMessage;
 }

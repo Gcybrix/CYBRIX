@@ -68,3 +68,18 @@ curl https://cybrix-central-bot.<subdomain>.workers.dev/health
 | کد پنل کار نمی‌کند | ۵ دقیقه گذشته یا قبلاً استفاده شده | دوباره `/panel` |
 | webhook 403 | secret نامنظیم | setWebhook را دوباره اجرا کنید |
 | `not enough credits` | هزینه چالش > موجودی | `/wallet` → کد هدیه یا grant مالک |
+
+## 5) Deploy سریع (v1.1.0+)
+```bash
+bash scripts/build.sh          # بیلد ۴ ورکر
+bun run deploy                 # = scripts/deploy.sh → deploy.ts (D1 + Workers + Secrets + Cron + Webhook + Health)
+bun run deploy --skip-webhooks # به‌روزرسانی کد بدون تغییر webhook
+```
+پس از موفقیت، `artifacts/deploy-summary.json` تولید می‌شود و secretهای webhook در `secrets.local.env` (gitignored) ذخیره می‌شوند.
+
+## 6) دستورات جدید بات (v1.1.0)
+- کاربران: `/notifications` `/report <chid> <reason>` `/claim <chid>`
+- برگزارکننده: `/copy <chid>` `/setpage <chid> on|off` `/setscore <chid> <tid> <score>` `/prizes <chid>` `/prizedone <chid> <rank>` `/redraw <chid> <rank> <reason>`
+- مالک: `/reports` `/reportclose <id> <resolved|dismissed>`
+- انواع چالش: random · vote · referral · quiz · **photo** · **points**
+- صفحه عمومی چالش: `https://<panel>/c/<id>` (بعد از `/setpage <id> on`)

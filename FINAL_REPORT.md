@@ -74,3 +74,53 @@ Date: 2026-10-26 · Version 1.0.0 · Deploy: Cloudflare (account feeba4e8…fb23
 - بررسی عضویت لحظه ترک‌کردن کانال را تلگرام اطلاع نمی‌دهد؛ سیستم در پایان چالش دوباره چک می‌کند (مستند شد)
 - Broadcast سرعت ۳۰msg/s (زیر سقف تلگرام)
 - D1 free plan: 5M row-read/day — برای مقیاس فعلی کافی
+
+---
+
+# 🔄 v1.1.0 — Repair, Audit & Feature Completion Session
+Date: 2026-10-26 (second session) · Basis: full audit of the live v1.0.0 deployment + GitHub main @ bfa8419
+
+## ۱) روش حسابرسی
+- بازسازی مخزن از GitHub (سندباکس قبلی پاک شده بود)، نصب وابستگی‌ها، `tsc` (۰ خطا)، `bun test` 13/13.
+- بررسی سلامت ۵ وورکر زنده، getWebhookInfo، اسکن اطلاعات شخصی/توکن در تمام شاخه‌ها (شامل backup/legacy-main) → **تمیز** (فقط placeholderها).
+- مطالعه کامل کد بات مرکزی/پنل و مقایسه با مشخصات → شناسایی باگ‌ها و قابلیت‌های ناقص.
+
+## ۲) باگ‌های کشف‌شده و اصلاح‌شده (با علت)
+| # | باگ | علت ریشه‌ای | اصلاح |
+|---|---|---|---|
+| 1 | `bun run deploy` شکست می‌خورد | package.json به `scripts/deploy.sh` ارجاع می‌داد که وجود نداشت | فایل wrapper ساخته شد (`scripts/deploy.sh`) |
+| 2 | دکمه «کانال‌های من» فقط متن راهنما می‌فرستاد | callback `menu:mychannels` به متن `channel_add` متصل بود | helper `listMyChannels` + اتصال صحیح callback و /mychannels |
+| 3 | دکمه `/redeem` (noop) هیچ بازخوردی نداشت | callback_data='noop' هندل نشده بود | alert راهنما |
+| 4 | رأی‌دهنده به‌صورت خودکار کاندید می‌شد | castVote برای رأی‌دهنده participant درج می‌کرد | حذف درج؛ رأی‌دهنده فقط رأی‌دهنده است |
+| 5 | رأی به خود مجاز بود | بررسی target==voter وجود نداشت | مسدودسازی + پیام vote_self |
+| 6 | `public_counts` نادیده گرفته می‌شد | config خوانده نمی‌شد | openVoteList به آن احترام می‌گذارد |
+| 7 | ریسک شکست finish در چالش‌های پرجمعیت (سقف subrequest) | recheck عضویت برای همه | pending همیشه + active سقف ۳۰ |
+| 8 | کد هدیه قابل نقد چندباره توسط یک کاربر | رهگیری per-user وجود نداشت | جدول coupon_redemptions + claim slot + rollback (E2E: redeem دوم → dup) |
+| 9 | باگ جدید v1.1.0: uses کد حتی در رد شدن می‌سوید | UPDATE مستقل از نتیجه INSERT | ترتیب: INSERT slot → UPDATE guarded → rollback (E2E: uses==redemptions) |
+| 10 | باگ جدید v1.1.0: /redraw روی UNIQUE(challenge,rank) می‌شکست | INSERT ردیف delivery جدید برای رتبه موجود | استفاده مجدد از همان ردیف delivery (تاریخچه در audit) |
+| — | «branches: ain]» در CI | **اشتباه حسابرسی**: لایه نمایش ترمینال دنباله `[m` را می‌خورد؛ فایل کامیت‌شده همیشه `[main]` بود (تأیید با od/git) | نیازی به تغییر نبود — مستند شد |
+
+## ۳) قابلیت‌های اضافه‌شده (همه با منطق واقعی + D1)
+- دو نوع چالش جدید: **مسابقه عکس** (آپلود/جایگزینی اثر + رأی روی آثار) و **رقابت امتیازی** (/setscore) → مجموع ۶ نوع.
+- **چرخه تحویل جایزه**: prizes به تفکیک رتبه، DM برنده با مهلت ۴۸ ساعت، /claim، /prizes، /prizedone، /redraw با دلیل، انقضای خودکار در cron + اطلاع برگزارکننده، برندگان جایگزین (تا ۲).
+- **مرکز اعلان‌ها** با dedupe + /notifications (خوانده/نخوانده).
+- **ضدتقلب**: risk_score برای churn رأی، /report + صف بررسی مالک (/reports، /reportclose) + اعلان مالک.
+- **کپی چالش** (/copy) به‌عنوان پیش‌نویس پیش‌پرشده.
+- **صفحه عمومی چالش** `/c/{id}` در پنل (فقط با opt-in برگزارکننده؛ بدون هیچ داده خصوصی؛ 404 یکسان برای خصوصی/ناموجود).
+- **پنل**: نمای گزارش‌های تخلف + وضعیت جوایز در جزئیات چالش (فقط owner/سازنده).
+- Migration v2 (۵ جدول جدید) با اجرای idempotent روی D1 زنده + پشتیبان‌گیری query-based از هر ۳ دیتابیس قبل از deploy.
+
+## ۴) تست‌های اجراشده (مدرک واقعی)
+- `bunx tsc --noEmit` → ۰ خطا (کل مخزن) · `bun test` → 13/13 · `bash scripts/build.sh` → ۴ باندل OK.
+- Smoke پنل توسط ایجنت: 81/81 (XSS، privacy، 404 یکسان، reports API، regressionها).
+- **E2E روی production** (تزریق آپدیت سینتتیک به webhook زنده با secret + راستی‌آزمایی با کوئری D1):
+  رد secret اشتباه (403) · رأی ثبت شد · **رأی به خود مسدود شد** · گزارش تخلف ثبت/بسته شد · کد هدیه: ساخت/نقد یک‌باره/dup · کپی چالش → confirm → لغو · /setpage → صفحه عمومی 200 با عنوان و برنده و **بدون Telegram ID** · cron چالش را finish کرد (winners + prize_deliveries + DM) · **چرخه کامل جایزه: pending → redraw (تعویض برنده با دلیل) → claimed → delivered** · /setscore=42 · اعلان‌ها read شدند.
+- Health بعد از deploy: هر ۵ وورکر v1.1.0 ONLINE + db:ok · getWebhookInfo: بدون خطا.
+
+## ۵) وضعیت استقرار v1.1.0
+همه ۵ سرویس به‌روزرسانی شدند (central/panel/builder/demo/demo-panel)، cron فعال، هر دو webhook با secret تنظیم شد. Push به GitHub پس از secret-scan انجام شد؛ نتیجه CI پس از push بررسی شد (بخش ۷ پایین).
+
+## ۶) محدودیت‌ها و موارد باز
+- Post Messages بات در ۵ کانال رسمی همچنان false → **BLOCKED BY ACCESS** (نیاز به اقدام مالک).
+- درگاه پرداخت واقعی، اشتراک/پلن‌ها، تیم، چندمرحله‌ای، داوری چندمعیاره، چند-سازمان، API عمومی با کلید → **NOT IMPLEMENTED** (مستند در docs/FEATURE_MATRIX.md به‌همراه دلیل و roadmap).
+- پشتیبان‌گیری: endpoint رسمی export/polling در این سشن نتیجه نداد؛ از dump جدول‌به‌جدول استفاده شد (artifacts/backup-*.sql) — برای پشتیبان زمان‌بندی‌شده، بررسی آینده endpoint توصیه می‌شود.

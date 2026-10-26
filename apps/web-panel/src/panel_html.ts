@@ -121,6 +121,15 @@ tr.rowlink{cursor:pointer}
 .badge.draft::before{background:var(--warn)}
 .badge.open{color:var(--warn);border-color:rgba(255,180,84,.4);background:rgba(255,180,84,.08)}
 .badge.open::before{background:var(--warn)}
+.badge.pending{color:var(--warn);border-color:rgba(255,180,84,.4);background:rgba(255,180,84,.08)}
+.badge.pending::before{background:var(--warn)}
+.badge.claimed{color:var(--info);border-color:rgba(127,181,255,.4);background:rgba(127,181,255,.08)}
+.badge.claimed::before{background:var(--info)}
+.badge.delivered{color:var(--accent);border-color:rgba(34,255,136,.4);background:rgba(34,255,136,.08)}
+.badge.delivered::before{background:var(--accent)}
+.badge.expired{color:var(--danger);border-color:rgba(255,84,112,.4);background:rgba(255,84,112,.08)}
+.badge.expired::before{background:var(--danger)}
+.badge.replaced{color:var(--muted)}
 .pager{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:16px}
 .pager-info{color:var(--muted);font-size:13px}
 /* ---------- empty / loading / error ---------- */
@@ -136,6 +145,8 @@ tr.rowlink{cursor:pointer}
 .ticket-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .ticket-user{color:var(--muted);font-size:12.5px;margin:4px 0 8px}
 .ticket-last{font-size:13.5px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 12px;white-space:pre-wrap;word-break:break-word}
+/* ---------- reports ---------- */
+.rep-actions{display:flex;gap:8px;flex-wrap:wrap}
 /* ---------- exports ---------- */
 .export-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .export-card{padding:20px}
@@ -238,6 +249,7 @@ html[dir='rtl'] #drawer.open{transform:translateX(0)}
     <button class="tab-btn" type="button" data-view="challenges" data-i18n="nav_challenges">چالش‌ها</button>
     <button class="tab-btn" type="button" data-view="transactions" data-i18n="nav_transactions">تراکنش‌ها</button>
     <button class="tab-btn" type="button" data-view="tickets" id="tab-tickets" data-i18n="nav_tickets">تیکت‌ها</button>
+    <button class="tab-btn" type="button" data-view="reports" id="tab-reports" hidden data-i18n="nav_reports">گزارش تخلف</button>
     <button class="tab-btn" type="button" data-view="exports" data-i18n="nav_exports">خروجی CSV</button>
   </nav>
   <main id="main">
@@ -265,6 +277,11 @@ html[dir='rtl'] #drawer.open{transform:translateX(0)}
       <h2 class="view-title" data-i18n="nav_tickets">تیکت‌ها</h2>
       <p class="muted small" data-i18n="tickets_subtitle">تیکت‌های پشتیبانی در وضعیت باز</p>
       <div id="tk-content"></div>
+    </section>
+    <section id="view-reports" class="view" hidden>
+      <h2 class="view-title" data-i18n="nav_reports">گزارش تخلف</h2>
+      <p class="muted small" data-i18n="reports_subtitle">گزارش‌های تخلف باز روی چالش‌ها</p>
+      <div id="rp-content"></div>
     </section>
     <section id="view-exports" class="view" hidden>
       <h2 class="view-title" data-i18n="nav_exports">خروجی CSV</h2>
@@ -415,7 +432,27 @@ fa:{
   challenge_cost:'هزینه',
   challenge_channel:'کانال',
   challenge_created_by:'تاریخ ساخت',
-  no_desc:'بدون توضیحات'
+  no_desc:'بدون توضیحات',
+  nav_reports:'گزارش تخلف',
+  reports_subtitle:'گزارش‌های تخلف باز روی چالش‌ها',
+  rep_challenge:'چالش',
+  rep_reason:'دلیل',
+  rep_reporter:'گزارش‌دهنده',
+  rep_resolve:'رسیدگی شد',
+  rep_dismiss:'رد گزارش',
+  rep_confirm_resolve:'این گزارش به‌عنوان رسیدگی‌شده بسته شود؟',
+  rep_confirm_dismiss:'این گزارش رد و بسته شود؟',
+  rep_closed_ok:'گزارش بسته شد',
+  empty_reports:'گزارشی نیست',
+  drawer_prizes:'جوایز',
+  prize_deadline:'مهلت',
+  prize_pending:'در انتظار پاسخ',
+  prize_claimed:'ادعا شده',
+  prize_delivered:'تحویل شده',
+  prize_expired:'منقضی شده',
+  prize_replaced:'جایگزین شده',
+  type_photo:'عکاسی',
+  type_points:'امتیازی'
 },
 en:{
   login_heading:'Admin Panel Login',
@@ -529,7 +566,27 @@ en:{
   challenge_cost:'Cost',
   challenge_channel:'Channel',
   challenge_created_by:'Created',
-  no_desc:'No description'
+  no_desc:'No description',
+  nav_reports:'Reports',
+  reports_subtitle:'Open abuse reports on challenges',
+  rep_challenge:'Challenge',
+  rep_reason:'Reason',
+  rep_reporter:'Reporter',
+  rep_resolve:'Resolved',
+  rep_dismiss:'Dismiss',
+  rep_confirm_resolve:'Close this report as resolved?',
+  rep_confirm_dismiss:'Dismiss and close this report?',
+  rep_closed_ok:'Report closed',
+  empty_reports:'No reports',
+  drawer_prizes:'Prizes',
+  prize_deadline:'Deadline',
+  prize_pending:'Pending',
+  prize_claimed:'Claimed',
+  prize_delivered:'Delivered',
+  prize_expired:'Expired',
+  prize_replaced:'Replaced',
+  type_photo:'Photo',
+  type_points:'Points'
 }};
 
 var state={
@@ -638,6 +695,7 @@ function enterShell(){
     $('u-name').textContent=me.first_name||('ID '+me.telegram_id);
     $('u-role').textContent=t('role_'+me.role)||me.role;
     $('tab-tickets').hidden=me.role!=='owner';
+    $('tab-reports').hidden=me.role!=='owner';
     applyI18nStatic();
     showView('dashboard');
   }).catch(function(){showLogin();});
@@ -650,6 +708,7 @@ function logoutLocal(){
   $('ch-content').innerHTML='';
   $('tx-content').innerHTML='';
   $('tk-content').innerHTML='';
+  $('rp-content').innerHTML='';
   showLogin();
 }
 
@@ -671,6 +730,7 @@ function refreshCurrentView(){
   else if(state.view==='challenges')loadChallenges();
   else if(state.view==='transactions')loadTx();
   else if(state.view==='tickets')loadTickets();
+  else if(state.view==='reports')loadReports();
 }
 function spinnerHtml(){return '<div class="spinner" role="status" aria-label="'+esc(t('loading'))+'"></div>';}
 function renderError(container,retryFn){
@@ -787,10 +847,18 @@ function statusBadge(st){
   var lbl=known?t('status_'+st):st;
   return '<span class="badge '+esc(st)+'">'+esc(lbl)+'</span>';
 }
+function prizeBadge(st){
+  var map={pending:'⏳',claimed:'📬',delivered:'✅',expired:'⛔',replaced:'🔁'};
+  var ico=map[st]||'•';
+  var key='prize_'+st;
+  var cur=I18N[state.lang]||I18N.fa;
+  var lbl=cur[key]!==undefined?cur[key]:st;
+  return '<span class="badge '+esc(st)+'">'+ico+' '+esc(lbl)+'</span>';
+}
 function typeLabel(ty){
-  var known=ty==='random'||ty==='vote'||ty==='referral'||ty==='quiz';
+  var known=ty==='random'||ty==='vote'||ty==='referral'||ty==='quiz'||ty==='photo'||ty==='points';
   var lbl=known?t('type_'+ty):ty;
-  var ico=ty==='random'?'🎲':(ty==='vote'?'🗳':(ty==='referral'?'👥':(ty==='quiz'?'🧠':'•')));
+  var ico=ty==='random'?'🎲':(ty==='vote'?'🗳':(ty==='referral'?'👥':(ty==='quiz'?'🧠':(ty==='photo'?'📷':(ty==='points'?'⭐':'•')))));
   return '<span>'+ico+' '+esc(lbl)+'</span>';
 }
 function pagerHtml(prefix,page,pages){
@@ -891,6 +959,22 @@ function renderDrawer(d){
     +infoCell(t('th_channel'),'<span class="mono">'+esc(ch.channel_chat_id)+'</span>')
     +infoCell(t('challenge_cost'),fmtNum(ch.cost))
     +'</div></div>';
+  if(d.prize_rows&&d.prize_rows.length){
+    var dlv={};
+    for(var k2=0;k2<(d.prize_deliveries||[]).length;k2++)dlv[d.prize_deliveries[k2].rank]=d.prize_deliveries[k2];
+    var prizesHtml='<ul class="winners">';
+    for(var k3=0;k3<d.prize_rows.length;k3++){
+      var pz=d.prize_rows[k3];
+      var dv=dlv[pz.rank]||null;
+      prizesHtml+='<li><span class="medal" aria-hidden="true">'+medal(pz.rank)+'</span>'
+        +'<span><b>'+esc(pz.title||('#'+pz.rank))+'</b>'+(pz.value?' <span class="muted">· '+esc(pz.value)+'</span>':'')+'</span>'
+        +(dv?prizeBadge(dv.status):'')
+        +(dv&&dv.deadline_at?'<span class="w-method muted">'+esc(t('prize_deadline'))+': '+fmtDate(dv.deadline_at)+'</span>':'')
+        +'</li>';
+    }
+    prizesHtml+='</ul>';
+    html+='<div class="drawer-sec"><h3>🎁 '+esc(t('drawer_prizes'))+'</h3>'+prizesHtml+'</div>';
+  }
   var winnersHtml='';
   if(!d.winners||!d.winners.length){
     winnersHtml='<div class="empty">'+esc(t('empty_winners'))+'</div>';
@@ -1046,6 +1130,50 @@ function renderTickets(d){
   c.innerHTML=html+'</div>';
 }
 
+/* --------------------------------- reports --------------------------------- */
+function loadReports(){
+  var c=$('rp-content');
+  c.innerHTML=spinnerHtml();
+  api('/api/reports').then(function(d){renderReports(d);})
+  .catch(function(){renderError(c,loadReports);});
+}
+function renderReports(d){
+  var c=$('rp-content');
+  if(!d.items||!d.items.length){
+    c.innerHTML='<div class="card"><div class="empty"><span class="ico">🛡️</span>'+esc(t('empty_reports'))+'</div></div>';
+    return;
+  }
+  var rows='';
+  for(var i=0;i<d.items.length;i++){
+    var r=d.items[i];
+    var chCell=r.challenge_title
+      ?esc(r.challenge_title)+' <span class="mono">#'+esc(r.target_id)+'</span>'
+      :'<span class="mono">'+esc(r.target_id)+'</span>';
+    rows+='<tr>'
+      +'<td data-label="'+esc(t('th_id'))+'" class="mono">#'+r.id+'</td>'
+      +'<td data-label="'+esc(t('rep_challenge'))+'" class="cell-title">'+chCell+'</td>'
+      +'<td data-label="'+esc(t('rep_reason'))+'" title="'+esc(r.reason||'')+'">'+esc(trunc(r.reason||'',140))+'</td>'
+      +'<td data-label="'+esc(t('rep_reporter'))+'">'+esc(r.reporter_name||'—')+'</td>'
+      +'<td data-label="'+esc(t('th_date'))+'">'+fmtDate(r.created_at)+'</td>'
+      +'<td data-label="'+esc(t('th_status'))+'"><div class="rep-actions">'
+      +'<button class="btn-ghost btn btn-sm" type="button" data-rep="resolved" data-id="'+r.id+'">✅ '+esc(t('rep_resolve'))+'</button>'
+      +'<button class="btn-ghost btn btn-sm" type="button" data-rep="dismissed" data-id="'+r.id+'">✖️ '+esc(t('rep_dismiss'))+'</button>'
+      +'</div></td>'
+      +'</tr>';
+  }
+  c.innerHTML='<p class="meta-line">'+esc(t('total_label'))+': '+fmtNum(d.items.length)+'</p>'
+    +'<div class="card table-wrap"><table class="resp">'
+    +'<caption class="sr-only">'+esc(t('nav_reports'))+'</caption>'
+    +'<thead><tr>'
+    +'<th scope="col">'+esc(t('th_id'))+'</th>'
+    +'<th scope="col">'+esc(t('rep_challenge'))+'</th>'
+    +'<th scope="col">'+esc(t('rep_reason'))+'</th>'
+    +'<th scope="col">'+esc(t('rep_reporter'))+'</th>'
+    +'<th scope="col">'+esc(t('th_date'))+'</th>'
+    +'<th scope="col">'+esc(t('th_status'))+'</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+
 /* ---------------------------------- wiring --------------------------------- */
 function debounce(fn,ms){
   var timer=null;
@@ -1128,6 +1256,20 @@ function wire(){
     var v=parseInt($('export-pa-id').value,10);
     if(!v||v<1){toast(t('exp_bad_id'),'error');return;}
     downloadCsv('/api/export/participants.csv?id='+v,'cybrix-participants-'+v+'.csv');
+  });
+  $('rp-content').addEventListener('click',function(e){
+    var b=e.target&&e.target.closest?e.target.closest('button[data-rep]'):null;
+    if(!b)return;
+    var id=parseInt(b.getAttribute('data-id'),10);
+    var st=b.getAttribute('data-rep');
+    if(st!=='resolved'&&st!=='dismissed')return;
+    var msg=st==='resolved'?t('rep_confirm_resolve'):t('rep_confirm_dismiss');
+    if(!window.confirm(msg))return;
+    b.disabled=true;
+    api('/api/reports/close',{method:'POST',body:JSON.stringify({id:id,status:st})}).then(function(){
+      toast(t('rep_closed_ok'),'success');
+      loadReports();
+    }).catch(function(){toast(t('err_generic'),'error');b.disabled=false;});
   });
   var themes=document.querySelectorAll('.theme-toggle');
   for(var m=0;m<themes.length;m++){

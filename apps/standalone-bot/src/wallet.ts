@@ -93,8 +93,8 @@ export async function txHistory(env: Env, tid: number, limit = 10) {
     .all<{ kind: string; wallet_kind: string; amount: number; balance_after: number; reason: string; created_at: number }>();
 }
 
-/** Redeem a gift/coupon code — atomic increment of uses. */
-export async function redeemCode(env: Env, tid: number, code: string): Promise<number | null> {
+/** Redeem a gift/coupon code — per-user single redemption + atomic uses guard. */
+export async function redeemCode(env: Env, tid: number, code: string): Promise<number | 'dup' | null> {
   const ts = now();
   const c = await env.DB
     .prepare(`SELECT code, amount, max_uses, uses, expires_at FROM coupons WHERE upper(code)=?`)
@@ -103,8 +103,19 @@ export async function redeemCode(env: Env, tid: number, code: string): Promise<n
   if (!c) return null;
   if (c.uses >= c.max_uses || (c.expires_at && c.expires_at < ts)) return null;
 
+  // 1) claim the user's single redemption slot first
+  const ins = await env.DB
+    .prepare(`INSERT INTO coupon_redemptions (code, telegram_id, created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING`)
+    .bind(c.code, tid, ts)
+    .run();
+  if ((ins.meta?.changes ?? 0) !== 1) return 'dup'; // this user already redeemed it
+
+  // 2) consume one global use, guarded; roll back the slot if exhausted
   const upd = await env.DB.prepare(`UPDATE coupons SET uses = uses + 1 WHERE code=? AND uses < max_uses`).bind(c.code).run();
-  if ((upd.meta?.changes ?? 0) !== 1) return null;
+  if ((upd.meta?.changes ?? 0) !== 1) {
+    await env.DB.prepare(`DELETE FROM coupon_redemptions WHERE code=? AND telegram_id=?`).bind(c.code, tid).run();
+    return null;
+  }
 
   await grant(env, tid, c.amount, 'gift', `coupon:${c.code}`);
   await audit(env.DB, tid, 'coupon.redeem', 'coupon', c.code, `${c.amount}`);

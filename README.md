@@ -10,7 +10,7 @@
 Telegram Challenge Platform — serverless on Cloudflare Workers + D1
 
 [![CI](https://github.com/Gcybrix/CYBRIX/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-1.0.0-22ff88)
+![Version](https://img.shields.io/badge/version-1.1.0-22ff88)
 ![License](https://img.shields.io/badge/license-MIT-22ff88)
 
 </div>

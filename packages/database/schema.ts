@@ -266,6 +266,46 @@ export const SCHEMA_STATEMENTS: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_jobs_due ON scheduled_jobs(status, run_at)`,
 
+  `CREATE TABLE IF NOT EXISTS coupon_redemptions (
+    code TEXT NOT NULL,
+    telegram_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (code, telegram_id)
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS prize_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    challenge_id INTEGER NOT NULL,
+    rank INTEGER NOT NULL,
+    winner_tid INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    deadline_at INTEGER NOT NULL,
+    responded_at INTEGER,
+    delivered_at INTEGER,
+    note TEXT DEFAULT '',
+    UNIQUE (challenge_id, rank)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_pd_status ON prize_deliveries(status, deadline_at)`,
+
+  `CREATE TABLE IF NOT EXISTS photo_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    challenge_id INTEGER NOT NULL,
+    telegram_id INTEGER NOT NULL,
+    file_id TEXT NOT NULL,
+    caption TEXT DEFAULT '',
+    created_at INTEGER NOT NULL,
+    UNIQUE (challenge_id, telegram_id)
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS challenge_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_tid INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+  )`,
+
   `CREATE TABLE IF NOT EXISTS panel_sessions (
     token TEXT PRIMARY KEY,
     telegram_id INTEGER NOT NULL,
@@ -287,6 +327,19 @@ export const SCHEMA_STATEMENTS: string[] = [
     updated_at INTEGER NOT NULL
   )`
 ];
+
+/** Prize delivery row shape. */
+export interface PrizeDeliveryRow {
+  id: number;
+  challenge_id: number;
+  rank: number;
+  winner_tid: number;
+  status: 'pending' | 'claimed' | 'delivered' | 'expired' | 'replaced';
+  deadline_at: number;
+  responded_at: number | null;
+  delivered_at: number | null;
+  note: string;
+}
 
 export const BUILDER_SCHEMA_STATEMENTS: string[] = [
   `CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`,
@@ -335,4 +388,4 @@ export const BUILDER_SCHEMA_STATEMENTS: string[] = [
   )`
 ];
 
-export const SCHEMA_VERSION = 'v1';
+export const SCHEMA_VERSION = 'v2';
